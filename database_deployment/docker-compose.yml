@@ -1,0 +1,239 @@
+version: "3.8"
+
+services:
+
+# For pgvector
+
+  pgvector_db:  # pgvector database
+    hostname: pgvector_db 
+    container_name: pgvector_db
+    image: ankane/pgvector:latest
+    ports:
+      - 5432:5432
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - ./pgvector/pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"  
+
+  pgvector_pgadmin:  # Graphical User interface to view the database
+    image: dpage/pgadmin4:latest
+    container_name: pgvector_pgadmin4
+    restart: unless-stopped
+    ports:
+      - 5016:80
+    user: "$UID:$GID"
+    depends_on:
+      - pgvector_db
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
+    volumes:
+      - ./pgvector/pgadmin-data:/var/lib/pgadmin
+
+# For chroma
+
+  chroma_db:
+    image: chromadb/chroma:latest
+    container_name: chroma_db
+    ports:
+      - 8000:8000
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma_data # this is the default path, change it as needed
+      - ANONYMIZED_TELEMETRY=False
+    volumes:
+      - ./chroma/chroma_data:/chroma/chroma_data
+    restart: unless-stopped 
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+
+# For weaviate
+
+  weaviate_db:
+    container_name: weaviate_db
+    image: semitechnologies/weaviate:latest
+    command:
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8080'
+    - --scheme
+    - http    
+    ports:
+      - 8081:8080
+      - 50051:50051
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      ENABLE_API_BASED_MODULES: 'true'
+      CLUSTER_HOSTNAME: 'node1'     
+    volumes:
+      - ./weaviate/weaviate_data:/var/lib/weaviate  # Persistence of data on the host
+    restart: unless-stopped  
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+
+# For milvus
+
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.18
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./milvus/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    restart: unless-stopped  
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"
+      - "9002:9000"
+    volumes:
+      - ./milvus/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    restart: unless-stopped  
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.5.12
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+    - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ./milvus/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    restart: unless-stopped
+    deploy:  
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+
+# For qdrant
+
+  qdrant_db:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    container_name: qdrant_db
+    ports:
+      - 6333:6333
+      - 6334:6334
+    expose:
+      - 6333
+      - 6334
+      - 6335
+    configs:
+      - source: qdrant_config
+        target: /qdrant/config/production.yaml
+    volumes:
+      - ./qdrant/qdrant_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+
+# For Redis
+
+  redis_db:
+    container_name: redis_db
+    image: redis/redis-stack:latest
+    ports:
+      - 6379:6379
+      - 8001:8001    
+    expose:
+      - 6379
+      - 8001
+    command: [ "/entrypoint.sh", "./configuration/redis/redis-stack.conf" ]
+    healthcheck:
+      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
+    volumes:
+      - ./redis/redis_data:/data
+    restart: unless-stopped 
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+
+# Configuration
+configs:
+  qdrant_config:
+    file: ./configuration/qdrant/qdrant_config.yaml
+
+networks:
+  default:
+    name: vector_dbs

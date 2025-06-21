@@ -1,0 +1,8 @@
+auth_modules:
+  my_db:
+    type: userpass
+    userpass:
+      username: 'username' # change it
+      password: 'password' # change it
+    options:
+      sslmode: disable
