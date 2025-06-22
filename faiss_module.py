@@ -10,17 +10,19 @@ import random
 
 _faiss_storage = {}
 
-# Helper to load a subset of the dataset
 def load_dataset(dataset, nrows):
     df = pd.read_csv(dataset)
     if nrows is not None and nrows < len(df):
         df = df.iloc[:nrows]
     return df
 
-# Helper to parse vector string to list of floats
 def parse_vector(vector_str):
+    """
+    Turns those pesky string representations like "[0.1, 0.2, 0.3]" 
+    back into actual lists we can work with. Sometimes data gets stored 
+    as strings when it really wants to be numbers.
+    """
     try:
-        # Remove any extra whitespace and parse as Python literal
         vector_list = ast.literal_eval(vector_str.strip())
         return vector_list
     except (ValueError, SyntaxError) as e:
@@ -28,12 +30,15 @@ def parse_vector(vector_str):
         return None
 
 def process_csv_data(df):
+    """
+    Takes our CSV and extracts the good stuff: vectors, text, and indices.
+    Skips any rows where the vector parsing goes sideways.
+    """
     vectors = []
     texts = []
     indices = []
     
     for _, row in df.iterrows():
-        # Parse the precomputed vector
         vector = parse_vector(row["vector"])
         if vector is None:
             print(f"Skipping row {row['index']} due to vector parsing error")
@@ -46,22 +51,32 @@ def process_csv_data(df):
     return np.array(vectors, dtype=np.float32), texts, indices
 
 def create_faiss_index(embeddings, index_type='IVFFLAT'):
+    """
+    Here's where the magic happens. FAISS gives us two flavors:
+    
+    HNSW: It's a clever graph where each point knows its neighbors. 
+    Super fast for searches, but once you build it, no takebacks on deletions (or updates).
+    
+    IVFFLAT: Divides space into clusters (like organizing books by genre), 
+    then searches only relevant clusters. Slower than HNSW but supports deletions.
+    """
     dimension = embeddings.shape[1]
     n_vectors = len(embeddings)
     
     if index_type == 'HNSW':
-        # HNSW index
         index = faiss.IndexHNSWFlat(dimension)
+        # M=16 means each node connects to 16 neighbors (sweet spot for most cases)
+        # efConstruction=200 means we consider 200 candidates when building (higher= better quality)
         index.hnsw.M = 16
         index.hnsw.efConstruction = 200
         index.add(embeddings)
     else:  # IVFFLAT
-        # IVF index for better performance
+        # Create sqrt(n) clusters because math people figured out this works well
         nlist = min(100, max(1, int(np.sqrt(n_vectors))))
         quantizer = faiss.IndexFlatL2(dimension)
         index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_L2)
         
-        # Train and add data
+        # Train tells FAISS how to split the space, then we add our data
         index.train(embeddings)
         index.add(embeddings)
     
@@ -73,27 +88,26 @@ def get_storage_key(embedding_model, dataset, nrows, index_type=None):
         key += f"_{index_type}"
     return key
 
-# CREATE operation: ingest vectors and return index construction time (to last object searchable)
 def create_vectors(embedding_model, dataset, nrows, index_type='IVFFLAT'):
+    """
+    The big setup: load data, build the search index, and track how fast we did it.
+    Throughput here means "vectors processed per second" during index construction.
+    """
     df = load_dataset(dataset, nrows)
     
     start_time = time.time()
     
-    # Process data to get precomputed vectors and metadata
     embeddings, data_texts, data_indices = process_csv_data(df)
     
-    # Normalize embeddings properly
+    # Normalize vectors so cosine similarity works properly (all vectors become unit length)
     embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
 
-    # Create FAISS index
     index = create_faiss_index(embeddings, index_type)
     
     total_time = time.time() - start_time
-    
-    # Calculate throughput (vectors per second)
     throughput = len(embeddings) / total_time if total_time > 0 else 0
     
-    # Store for later operations
+    # Stash everything for later operations
     storage_key = get_storage_key(embedding_model, dataset, nrows, index_type)
     _faiss_storage[storage_key] = {
         'index': index,
@@ -103,15 +117,16 @@ def create_vectors(embedding_model, dataset, nrows, index_type='IVFFLAT'):
         'index_type': index_type
     }
     
-    # Save result to create.json (as master.py expects)
     save_result("create", embedding_model, nrows, "faiss", throughput)
     return throughput
 
-# QUERY operation: run a semantic query and return average latency
 def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5, index_type='IVFFLAT'):
+    """
+    The moment of truth: find similar vectors and see how fast we can do it.
+    We convert L2 distances back to cosine similarity because that's what humans understand.
+    """
     storage_key = get_storage_key(embedding_model, dataset, nrows, index_type)
     
-    # Check if we have stored data, if not create it
     if storage_key not in _faiss_storage:
         create_vectors(embedding_model, dataset, nrows, index_type)
     
@@ -120,7 +135,7 @@ def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5, index_t
     texts = stored_data['texts']
     indices = stored_data['indices']
 
-    # Map model alias to Hugging Face model ID
+    # Handle the Snowflake model alias quirk
     if embedding_model == "snowflake-arctic-embed-l-v2.0":
         hf_model_name = "Snowflake/snowflake-arctic-embed-l-v2.0"
     else:
@@ -128,38 +143,31 @@ def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5, index_t
 
     model = SentenceTransformer(hf_model_name)
     
-    # If no query text provided, use a default
     if query_text is None:
         query_text = "Protocol with TCP"
     
-    # Encode the query text and normalize it
+    # Turn query text into the same kind of vector our index expects
     vector = model.encode(query_text)
     query_embedding = np.array([vector], dtype=np.float32)
     query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=1, keepdims=True)
     
-    # Set nprobe for IVF index
+    # For IVF indices: nprobe controls how many clusters we search (more = better results, slower)
     if hasattr(index, 'nprobe'):
         index.nprobe = min(10, getattr(index, 'nlist', 10))
     
-    # Ensure k doesn't exceed available vectors
     k = min(k, index.ntotal, len(texts))
     
     start = time.time()
-    
-    # Search (single query like Weaviate)
     distances, faiss_indices = index.search(query_embedding, k)
     latency = time.time() - start
     
-    # Process results
     results = []
     if len(distances[0]) > 0:
         for i, (dist, idx) in enumerate(zip(distances[0], faiss_indices[0])):
-            # Check bounds to prevent index errors
             if idx >= 0 and idx < len(texts) and idx < len(indices):
-                # Convert L2 distance to cosine similarity
-                # For normalized vectors, L2 distance = 2 * (1 - cosine_similarity)
-                # So cosine_similarity = 1 - (L2_distance / 2)
-                similarity = max(0, 1 - (dist / 2))  # Clamp to avoid negative values
+                # Convert L2 distance back to cosine similarity
+                # Math: for normalized vectors, L2_distance = 2 * (1 - cosine_similarity)
+                similarity = max(0, 1 - (dist / 2))
                 results.append({
                     "flow_index": indices[idx],
                     "metadata": texts[idx],
@@ -168,33 +176,34 @@ def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5, index_t
             else:
                 print(f"Warning: Invalid index {idx} (max: {len(texts)-1}) or distance {dist}")
     
-    # Calculate metrics
     query_throughput = 1 / latency if latency > 0 else 0
     avg_similarity = sum(r["similarity"] for r in results) / len(results) if results else 0
     
-    # Save metrics
     save_result("query_throughput", embedding_model, nrows, "faiss", query_throughput)
     save_result("query_similarity", embedding_model, nrows, "faiss", avg_similarity)
     
     return query_throughput, avg_similarity, results
 
-# DELETE operation: delete all objects and return time taken
 def delete_vectors(embedding_model, dataset, nrows, index_type='IVFFLAT'):
+    """
+    Here's where HNSW shows its weakness: it's read-only after construction.
+    So we fake deletion by nuking the whole thing.
+    
+    IVFFLAT plays nicer: we can actually remove vectors by rebuilding the index
+    with only the survivors. Not elegant, but it works.
+    """
     storage_key = get_storage_key(embedding_model, dataset, nrows, index_type)
     
-    # Check if we have stored data, if not create it
     if storage_key not in _faiss_storage:
         create_vectors(embedding_model, dataset, nrows, index_type)
     
-    # Check if HNSW index (doesn't support deletion)
+    # HNSW doesn't support real deletion, so we simulate it
     if index_type == 'HNSW':
-        # For HNSW, we simulate deletion by clearing the storage
         start = time.time()
         stored_data = _faiss_storage[storage_key]
         total_vectors = stored_data['index'].ntotal
         num_to_delete = min(nrows, total_vectors)
         
-        # Clear the storage to simulate deletion
         del _faiss_storage[storage_key]
         
         duration = time.time() - start
@@ -210,33 +219,27 @@ def delete_vectors(embedding_model, dataset, nrows, index_type='IVFFLAT'):
     
     start = time.time()
     
-    # Get total available vectors
-    total_vectors = len(embeddings)  # Use embeddings length instead of index.ntotal
-    
-    # Calculate number to delete
+    total_vectors = len(embeddings)
     num_to_delete = min(nrows, total_vectors)
     
     if num_to_delete > 0 and total_vectors > 0:
-        # Select random indices to delete
+        # Pick random victims for deletion (keeps things fair for benchmarking)
         indices_to_delete = set(random.sample(range(total_vectors), num_to_delete))
         indices_to_keep = [i for i in range(total_vectors) if i not in indices_to_delete]
         
         if indices_to_keep:
-            # Create new arrays with remaining vectors
+            # Rebuild index with survivors only
             kept_embeddings = embeddings[indices_to_keep]
             kept_texts = [texts[i] for i in indices_to_keep]
             kept_indices = [indices[i] for i in indices_to_keep]
             
-            # Create new index with remaining vectors
             new_index = create_faiss_index(kept_embeddings, index_type)
             
-            # Update stored data
             stored_data['index'] = new_index
             stored_data['embeddings'] = kept_embeddings
             stored_data['texts'] = kept_texts
             stored_data['indices'] = kept_indices
         else:
-            # Delete all vectors - clear the storage
             del _faiss_storage[storage_key]
         
         total_deleted = num_to_delete
@@ -245,19 +248,21 @@ def delete_vectors(embedding_model, dataset, nrows, index_type='IVFFLAT'):
     
     duration = time.time() - start
     
-    # Calculate delete throughput (deletions per second)
-    # Add minimum duration to prevent extremely high values
-    duration = max(duration, 0.001)  # Minimum 1ms
+    # Prevent division by zero from making throughput look impossibly good
+    duration = max(duration, 0.001)
     delete_throughput = total_deleted / duration
     
     save_result("delete", embedding_model, nrows, "faiss", delete_throughput)
     return delete_throughput
 
-# Save result to JSON file in the nested structure expected by master.py
 def save_result(operation, embedding_model, nrows, db_name, value):
+    """
+    Builds nested JSON structure that master.py expects. 
+    NumPy types don't play nice with JSON, so we convert them first.
+    """
     filename = f"{operation}.json"
     
-    # Ensure the value is JSON serializable
+    # JSON doesn't know about NumPy types, so we help it out
     if isinstance(value, (np.int32, np.int64)):
         value = int(value)
     elif isinstance(value, (np.float32, np.float64)):
