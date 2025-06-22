@@ -69,3 +69,111 @@ All components are Dockerized for quick deployment.
 - Scalability with batch operations
 
 
+## Additional Application Features & Capabilities
+
+- **Interactive Streamlit UI:**
+  - Configure benchmarks, select databases, embedding models, and dataset sizes.
+  - Visualize results with interactive charts, tables, and downloadable CSVs.
+  - Explore trends, compare models, and analyze performance metrics in real time.
+- **Automated Benchmarking:**
+  - Use `automatic_runner.py` for batch, reproducible experiments across datasets, models, and databases.
+  - Results are saved and organized for later analysis.
+- **Custom Dataset & Model Support:**
+  - Easily add your own CSV datasets and select from multiple embedding models.
+- **Advanced Visualization:**
+  - Performance, trends, and explorer tabs for deep analysis.
+  - Downloadable results for offline review.
+- **Modular Database Integration:**
+  - Add new vector DBs by implementing the required interface in a new module.
+
+## Component Overview
+
+- **UI Layer:**
+  - `app.py`: Streamlit dashboard for configuration, execution, and visualization.
+- **Benchmark Engine:**
+  - `master.py`: Core logic for running benchmarks and managing results.
+  - `automatic_runner.py`: Automates large-scale, repeatable experiments.
+- **Database Modules:**
+  - Individual modules for each supported vector DB (e.g., `faiss_module.py`, `milvus_module.py`, etc.).
+- **Deployment:**
+  - `database_deployment/` and `observability_deployment/`: Docker Compose files and scripts for launching databases and monitoring stack.
+- **Observability:**
+  - Prometheus, Grafana, Node Exporter, cAdvisor, and Postgres Exporter for full-stack monitoring.
+- **Configuration:**
+  - YAML and shell scripts for easy setup, database, and monitoring configuration.
+
+## Deployment & Usage
+
+### 1. Launch Vector Databases & Observability Stack
+- Navigate to `database_deployment/` and run:
+  ```bash
+  sudo docker-compose up -d
+  ```
+- For observability (Prometheus, Grafana, etc.), use:
+  ```bash
+  cd ../observability_deployment
+  sudo docker-compose up -d
+  ```
+
+### 2. Start/Stop All Services
+- Use `start.sh` to bring up all database containers and wait for health checks.
+- Use `clear_persistence.sh` to remove persistent volumes (use with caution).
+
+### 3. Run the Streamlit UI
+- From the `VD-mark` directory:
+  ```bash
+  streamlit run app.py
+  ```
+- Access the UI at `http://localhost:8501` by default.
+
+### 4. Automated Benchmarking
+- Run large-scale, automated experiments:
+  ```bash
+  python automatic_runner.py
+  ```
+- Results are saved and organized by dataset and operation.
+
+## Extending the Tool
+
+- **Add a New Vector Database:**
+  - Create a new module (e.g., `mydb_module.py`) implementing `create_vectors`, `query_vectors`, and `delete_vectors`.
+  - Register the module in `app.py` and `master.py`.
+- **Add New Benchmark Scenarios:**
+  - Extend the logic in `master.py` or `automatic_runner.py` to add new operations or metrics.
+
+## Example Workflows
+
+- **Interactive Benchmarking:**
+  1. Launch all services (databases, observability).
+  2. Start the Streamlit UI.
+  3. Select databases, embedding models, dataset, and operation.
+  4. Run benchmarks and explore results in the UI.
+
+- **Automated Batch Benchmarking:**
+  1. Prepare datasets in the required format.
+  2. Run `automatic_runner.py` to execute all combinations.
+  3. Review results in the generated folders or load them in the UI.
+
+## Observability & Monitoring
+
+- **Prometheus** collects metrics from all vector DB containers and system exporters.
+- **Grafana** provides dashboards for real-time and historical performance analysis.
+- **Node Exporter** and **cAdvisor** monitor system and container resource usage.
+- **Postgres Exporter** tracks PostgreSQL metrics (for pgvector).
+- Configuration files for Prometheus and exporters are in `observability_deployment/`.
+- Access Grafana at `http://localhost:3000` (default credentials: `admin`/`admin`).
+
+## Configuration Files
+
+- **Database Configurations:**
+  - `database_deployment/configuration/` contains YAML and conf files for each DB (e.g., Qdrant, Redis).
+- **Observability Configurations:**
+  - `observability_deployment/prometheus.yml`, `postgres_exporter.yml`, etc.
+- **Docker Compose:**
+  - `database_deployment/docker-compose.yml` and `observability_deployment/docker-compose.yml` define all services and their dependencies.
+
+---
+
+For further details, see the inline comments in each script and the deployment READMEs in their respective folders.
+
+
