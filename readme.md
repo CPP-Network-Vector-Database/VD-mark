@@ -173,7 +173,10 @@ All components are Dockerized for quick deployment.
   - `database_deployment/docker-compose.yml` and `observability_deployment/docker-compose.yml` define all services and their dependencies.
 
 ---
+## Dataset
 
-For further details, see the inline comments in each script and the deployment READMEs in their respective folders.
+The dataset used for benchmarking in this setup is the IP Flows dataset, which can be found on [Kaggle](https://www.kaggle.com/datasets/ajayks23/packet-flow-datasets).
+
+For further details, see the inline comments in each script and the deployment and observability READMEs in their respective folders.
 
 
