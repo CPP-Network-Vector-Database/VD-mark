@@ -31,6 +31,8 @@ def ensure_collection(client, collection_name, vector_size):
         vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
     )
 
+
+
 # Helper to parse vector string to list of floats
 def parse_vector(vector_str):
     """Parse the vector string from CSV to a list of floats"""
@@ -44,7 +46,7 @@ def parse_vector(vector_str):
 
 # CREATE operation: ingest vectors and return index construction time (to last object searchable)
 def create_vectors(embedding_model, dataset, nrows, batch_size=500):
-    client = QdrantClient("http://localhost:6333")
+    client = QdrantClient("http://localhost:6333",timeout=600.0)
     df = load_dataset(dataset, nrows)
     
     # Find first valid vector to determine size (using generator for efficiency)
@@ -106,7 +108,7 @@ def create_vectors(embedding_model, dataset, nrows, batch_size=500):
 
 # QUERY operation: run a semantic query and return average latency
 def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5):
-    client = QdrantClient("http://localhost:6333")
+    client = QdrantClient("http://localhost:6333",timeout=100.0)
 
     # Map model alias to Hugging Face model ID
     if embedding_model == "snowflake-arctic-embed-l-v2.0":
@@ -152,7 +154,7 @@ def query_vectors(embedding_model, dataset, nrows, query_text=None, k=5):
 
 # DELETE operation: delete all objects and return time taken
 def delete_vectors(embedding_model, dataset, nrows):
-    client = QdrantClient("http://localhost:6333")
+    client = QdrantClient("http://localhost:6333",timeout=100.0)
     collection_name = "IPFlow"
     start = time.time()
     total_deleted = 0

@@ -21,8 +21,8 @@ def load_dataset(dataset, nrows):
 def connect_db():
     return psycopg2.connect(
         dbname="vector",
-        user="admin",
-        password="admin@1234",
+        user="username", # Change it 
+        password="password", # Change it 
         host="localhost",
         port="5432"
     )

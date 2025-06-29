@@ -203,7 +203,27 @@ services:
           cpus: "${CPU_RESERVE}"     
           memory: "${MEMORY_RESERVE}"
 
-# For Redis
+# for faiss
+
+  faiss_db:
+    build:
+      context: ./configuration/faiss
+      dockerfile: Dockerfile
+    image: faiss:latest
+    container_name: faiss_db
+    ports:
+      - "7000:7000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"       
+          memory: "${MEMORY_LIMIT}"   
+        reservations:
+          cpus: "${CPU_RESERVE}"     
+          memory: "${MEMORY_RESERVE}"
+    
+# For redis
 
   redis_db:
     container_name: redis_db

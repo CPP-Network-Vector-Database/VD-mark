@@ -9,7 +9,7 @@
 To spin up the Docker containers defined in the `docker-compose.yml` file, run the following command:
 
 ```bash
-sudo docker-compose up -d
+sudo bash start.sh
 ```
 
 This will start the containers in detached mode (i.e., in the background).
@@ -35,7 +35,7 @@ The `clear_persistence.sh` script is designed to remove Docker volumes attached 
 To run the script and clear persistent volumes, execute the following command:
 
 ```bash
-bash clear_persistence.sh
+sudo bash clear_persistence.sh
 ```
 
 This command will:
@@ -45,3 +45,7 @@ This command will:
 - Remove the volumes associated with the stopped containers to free up storage.
 
 > **Note:** Use this script with caution, as it will permanently delete the volumes and their data.
+
+### Update
+
+- Added Faiss Container for Benchmark previously running natively in the script for Better observability.
